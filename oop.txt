@@ -1,0 +1,5 @@
+main.py              	# 程式進入點，負責整合所有 Tab 與 Notebook
+├── crypto_utils.py     # 核心運算邏輯 (ECDSA 簽章、轉換、Hash)
+├── tab_ec.py           # EC Sign / Verify 分頁的 UI 與控制邏輯
+├── tab_cert.py         # Certificate Decoder 分頁的 UI
+└── tab_about.py		# 關於頁面

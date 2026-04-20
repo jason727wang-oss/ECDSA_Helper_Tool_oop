@@ -1,0 +1,5 @@
+# 核心加密運算函式庫
+cryptography>=41.0.0
+
+pip install -r requirements.txt
+pyinstaller --noconsole --onefile --name "ECDSA_Helper_Tool" main.py
