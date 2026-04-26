@@ -107,6 +107,9 @@ hfFGR/y6AjEAt3TqnssaJyxtXNNhNNiILgpoFlbm/VbCo3dvtA0GvKiVYGhRB33F
             else:
                 res += "\n[3. Certificate PEM Format]:\n" + pem_bytes.decode() + "\n"
 
+            # --- 新增區塊 4: Signature ---
+            res += "\n[4. Certificate Signature (hex)]:\n" + cert.signature.hex().upper() + "\n"
+
 
 
             # 6. 更新 UI
