@@ -101,14 +101,17 @@ hfFGR/y6AjEAt3TqnssaJyxtXNNhNNiILgpoFlbm/VbCo3dvtA0GvKiVYGhRB33F
                 res += f"\n[2. Public Key (X||Y)]:\n{pub_hex}"
                 self.extracted_pub.set(pub_hex)
 
-            # 根據輸入格式決定區塊 3 的內容
-            if input_format == "PEM":
-                res += "\n[3. Raw Certificate DER (Hex)]:\n" + der_bytes.hex().upper() + "\n"
-            else:
-                res += "\n[3. Certificate PEM Format]:\n" + pem_bytes.decode() + "\n"
+            # --- 新增區塊 3: Signature ---
+            sig_bytes = cert.signature
+            res += f"\n[3. Certificate Signature ({len(sig_bytes)} bytes, hex)]:\n" + sig_bytes.hex().upper() + "\n"
 
-            # --- 新增區塊 4: Signature ---
-            res += "\n[4. Certificate Signature (hex)]:\n" + cert.signature.hex().upper() + "\n"
+            # 根據輸入格式決定區塊 4 的內容
+            if input_format == "PEM":
+                res += "\n[4. Raw Certificate DER (Hex)]:\n" + der_bytes.hex().upper() + "\n"
+            else:
+                res += "\n[4. Certificate PEM Format]:\n" + pem_bytes.decode() + "\n"
+
+
 
 
 
