@@ -101,9 +101,27 @@ hfFGR/y6AjEAt3TqnssaJyxtXNNhNNiILgpoFlbm/VbCo3dvtA0GvKiVYGhRB33F
                 res += f"\n[2. Public Key (X||Y)]:\n{pub_hex}"
                 self.extracted_pub.set(pub_hex)
 
-            # --- 新增區塊 3: Signature ---
-            sig_bytes = cert.signature
-            res += f"\n[3. Certificate Signature ({len(sig_bytes)} bytes, hex)]:\n" + sig_bytes.hex().upper() + "\n"
+            # --- 新增區塊 3: Signature (解析為 Raw R+S 格式) ---
+            from cryptography.hazmat.primitives.asymmetric import utils
+
+            sig_data = cert.signature
+            try:
+                # 嘗試將 DER 格式解碼為 R, S 數值
+                r, s = utils.decode_dss_signature(sig_data)
+
+                # 根據曲線決定單個分量的長度 (P-384 為 48B, P-256 為 32B)
+                # 如果 pk 是 ec.EllipticCurvePublicKey
+                if isinstance(pk, ec.EllipticCurvePublicKey):
+                    field_size = (pk.curve.key_size + 7) // 8
+                    # 拼合成 Raw 格式 (R||S)
+                    raw_sig = r.to_bytes(field_size, 'big') + s.to_bytes(field_size, 'big')
+                    res += f"\n[3. Certificate Signature (Raw R+S {len(raw_sig)}B)]:\n" + raw_sig.hex().upper() + "\n"
+                else:
+                    # 非 EC 憑證則顯示原始 DER
+                    res += f"\n[3. Certificate Signature (DER {len(sig_data)}B)]:\n" + sig_data.hex().upper() + "\n"
+            except Exception:
+                # 如果解碼失敗，回退顯示原始數據
+                res += f"\n[3. Certificate Signature (Raw R+S {len(sig_data)}B)]:\n" + sig_data.hex().upper() + "\n"
 
             # 根據輸入格式決定區塊 4 的內容
             if input_format == "PEM":
