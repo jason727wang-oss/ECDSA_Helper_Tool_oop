@@ -36,8 +36,8 @@ class ECTab(ttk.Frame):
         key_f = ttk.LabelFrame(col1, text="Key Management", padding="10")
         key_f.pack(fill="both", expand=True, pady=5)
 
-        # PEM Private Key 區塊，增加綁定事件
-        tk.Label(key_f, text="PEM Private Key").pack(anchor="w")
+        # Key (*.pem) 區塊，增加綁定事件
+        tk.Label(key_f, text="Key file (*.pem) ").pack(anchor="w")
         self.pem_text = scrolledtext.ScrolledText(key_f, height=10, font=('Courier', 10))
         self.pem_text.pack(fill="x", pady=(0, 5))
         self.pem_text.bind("<<Paste>>", self.on_pem_paste)  # 核心功能：貼上自動解析
@@ -47,7 +47,7 @@ class ECTab(ttk.Frame):
         self.priv_text.pack(fill="x", pady=(0, 15))
         self.priv_text.bind("<<Paste>>", self.on_paste_event)
 
-        tk.Label(key_f, text="Public Key (X||Y hex)").pack(anchor="w")
+        tk.Label(key_f, text="Public Key (X+Y)(hex)").pack(anchor="w")
         self.pub_text = scrolledtext.ScrolledText(key_f, height=5, font=('Courier', 10))
         self.pub_text.pack(fill="x", pady=(0, 5))
         self.pub_text.bind("<<Paste>>", self.on_paste_event)
@@ -130,12 +130,27 @@ class ECTab(ttk.Frame):
         if not pem_str: return
 
         try:
-            # 1. 載入金鑰
-            private_key = serialization.load_pem_private_key(pem_str.encode(), password=None)
-
-            # 2. 辨識曲線
-            curve_obj = private_key.curve
+            private_key = None
+            public_key = None
             detected_curve = ""
+
+            # --- 1. 嘗試解析金鑰 ---
+            try:
+                # 先試試看是不是 Private Key
+                private_key = serialization.load_pem_private_key(pem_str.encode(), password=None)
+                public_key = private_key.public_key()
+                self.out_print("💡 PEM Private Key detected.")
+            except Exception:
+                try:
+                    # 如果失敗，試試看是不是 Public Key
+                    public_key = serialization.load_pem_public_key(pem_str.encode())
+                    self.out_print("💡 PEM Public Key detected.")
+                except Exception:
+                    self.out_print("❌ Invalid PEM: Not a valid EC Private or Public Key.")
+                    return
+
+            # --- 2. 辨識曲線 ---
+            curve_obj = public_key.curve
             if isinstance(curve_obj, ec.SECP384R1):
                 detected_curve = "P-384"
             elif isinstance(curve_obj, ec.SECP256R1):
@@ -143,23 +158,28 @@ class ECTab(ttk.Frame):
 
             if detected_curve:
                 self.curve_var.set(detected_curve)
-                self.out_print(f"💡 Auto-detected Curve: {detected_curve}")
             else:
                 self.out_print("⚠️ Unknown Curve Type in PEM")
                 return
 
-            # 3. 更新介面 Hex
+            # --- 3. 更新介面 ---
             _, _, bl = cu.get_curve_settings(detected_curve)
-            priv_val = private_key.private_numbers().private_value
-            self.priv_text.delete("1.0", tk.END)
-            self.priv_text.insert(tk.END, f"{priv_val:0{bl * 2}x}")
 
-            pub = private_key.public_key().public_numbers()
+            # 處理 Private Key (如果有解析到)
+            self.priv_text.delete("1.0", tk.END)
+            if private_key:
+                priv_val = private_key.private_numbers().private_value
+                self.priv_text.insert(tk.END, f"{priv_val:0{bl * 2}x}")
+            else:
+                self.priv_text.insert(tk.END, "(No Private Key in PEM)")
+
+            # 處理 Public Key (X||Y)
+            pub = public_key.public_numbers()
             self.pub_text.delete("1.0", tk.END)
             self.pub_text.insert(tk.END, f"{pub.x:0{bl * 2}x}{pub.y:0{bl * 2}x}")
 
             self.out_print(f"✅ PEM loaded for {detected_curve}")
-            self.update_tbs()  # 連動更新 Hash
+            self.update_tbs()
 
         except Exception as e:
             self.out_print(f"❌ PEM Parse Error: {e}")
@@ -211,13 +231,13 @@ class ECTab(ttk.Frame):
             pass
 
     def calc_file_hash(self):
-        path = filedialog.askopenfilename(filetypes=[("Files", "*.hex;*.txt")])
+        path = filedialog.askopenfilename(filetypes=[("Files", "*.bin;*.txt")])
         if not path: return
         try:
             _, h, _ = cu.get_curve_settings(self.curve_var.get())
 
             # 檢查副檔名
-            is_hex = path.lower().endswith(('.hex'))
+            is_hex = path.lower().endswith(('.bin'))
 
             if is_hex:
                 # --- 處理文字格式的 Hex 檔案 ---
