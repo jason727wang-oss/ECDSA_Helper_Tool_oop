@@ -249,10 +249,10 @@ class SPDMParserTab(ttk.Frame):
                 status_tag = "info"
                 expiry_status = " [✅ Valid]"
                 if now < c.not_valid_before_utc or now > c.not_valid_after_utc:
-                    status_tag = "fail";
+                    status_tag = "fail"
                     expiry_status = " [❌ EXPIRED]"
 
-                # 完整顯示 Subject 與 Issuer (恢復)
+                # 完整顯示 Subject 與 Issuer
                 self.log_msg(f"\n[Cert{idx}] Subject: {c.subject.rfc4514_string()}", "info")
                 self.log_msg(f"   - Issuer:  {c.issuer.rfc4514_string()}", "info")
                 self.log_msg(f"   - Type: {pub_key_type}", "info")
@@ -264,7 +264,7 @@ class SPDMParserTab(ttk.Frame):
             except Exception as e:
                 self.log_msg(f"   ❌ Error parsing cert{idx}: {e}", "fail")
 
-        # --- Chain Verification (恢復) ---
+        # --- Chain Verification ---
         if len(certs) > 1:
             self.log_msg("\n" + "-" * 60, "header")
             self.log_msg("=== Chain of Trust Verification ===", "header")
@@ -273,7 +273,7 @@ class SPDMParserTab(ttk.Frame):
                 tag = "pass" if success else "fail"
                 self.log_msg(f"Verify [Cert{i - 1} -> Cert{i}]: {'✅ PASS' if success else f'❌ FAIL: {error_msg}'}", tag)
 
-        # --- Digest Components (完整恢復) ---
+        # --- Digest Components ---
         if raw_ders:
             self.log_msg("\n" + "-" * 60, "header")
             self.log_msg("=== SPDM Certificate Chain Digest Components ===", "header")
@@ -297,7 +297,7 @@ class SPDMParserTab(ttk.Frame):
                 self.log_msg(f" Cert Chain Digest (SHA384):", "header")
                 self.log_msg(f" >> {cert_chain_digest}", "pass")
 
-                # Signature / TBS Verify (完整恢復)
+                # Signature / TBS Verify
                 sig_match = re.search(r"Challenge Signature:\s*([0-9A-Fa-f]+)", content)
                 tbs_match = re.search(r"Leo challenge_msg\(TBS\):\s*([0-9A-Fa-f]+)", content)
 
@@ -311,31 +311,201 @@ class SPDMParserTab(ttk.Frame):
                     self.log_msg(f" challenge_msg(TBS) = SPDM Response + Nonce + All Cert Chain + Padding", "pass")
                     self.log_msg(f" [Digest] SHA-384: {hashlib.sha384(tbs_bin).hexdigest().upper()}", "header")
 
-                    # Verify
+                    # Verify Leaf Public Key
                     leaf_pub = certs[-1].public_key()
+                    full_hex = leaf_pub.public_bytes(
+                        encoding=serialization.Encoding.X962,
+                        format=serialization.PublicFormat.UncompressedPoint
+                    ).hex()
+                    leaf_pubkey_hex = full_hex[2:]
+
+                    self.log_msg(f" [leaf_pubkey_hex(cer3)] : {leaf_pubkey_hex}", "header")
+
                     sig_bin = bytes.fromhex(sig_match.group(1))
                     r, s = int.from_bytes(sig_bin[:48], "big"), int.from_bytes(sig_bin[48:], "big")
+                    self.log_msg(f" [sig_r_s_hex] : {r:096x},{s:096x}", "header")
                     from cryptography.hazmat.primitives.asymmetric import utils
                     der_sig = utils.encode_dss_signature(r, s)
                     leaf_pub.verify(der_sig, tbs_bin, ec.ECDSA(hashes.SHA384()))
+                    self.log_msg("\n ✅ Use public key of Cert3 to verify.", "pass")
                     self.log_msg("\n ✅ Verification SUCCESS! (With Padding)", "pass")
                 else:
-                    self.log_msg("\n  ⚠️ Missing Leo challenge_msg(TBS) in log.", "warning")
+                    self.log_msg("\n  ⚠️ Missing challenge_msg(TBS) in log.", "warning")
 
-                # CEC1736 Measurement Guide (恢復)
+                # ========================================================
+                # 🛠️ 解析實體數據 (SPDM Measurements Parser)
+                # ========================================================
+                self.log_msg("\n" + "=" * 60, "header")
+                self.log_msg("=== SPDM Real-time Measurements Parsing ===", "header")
+
+                meas_pattern = re.compile(
+                    r"(?:Measurement\s*(?:Record|Index)|Block|Index\s*:?)\s*\[?(\d)\]?\s*(?::|=)?\s*([0-9A-Fa-f]{32,96})",
+                    re.IGNORECASE
+                )
+                parsed_meas = meas_pattern.findall(content)
+
+                if not parsed_meas:
+                    meas_pattern_alt = re.compile(
+                        r"(?:Index|Block)\s*[:=]?\s*(\d).*?(?:Value|Hash)?\s*[:=]?\s*([0-9A-Fa-f]{34,96})",
+                        re.IGNORECASE
+                    )
+                    parsed_meas = meas_pattern_alt.findall(content)
+
+                block_names = {
+                    "1": "ROM (Hardware ID)",
+                    "2": "Mutable FW",
+                    "3": "HW Config",
+                    "4": "FW Config",
+                    "5": "Manifest"
+                }
+
+                if parsed_meas:
+                    self.log_msg(
+                        f"{'Block/Index':<12} | {'Component Name':<18} | {'Real-time Parsed Hash Value (SHA-384 / Raw Structure)'}",
+                        "header_data")
+                    self.log_msg("-" * 115, "info")
+
+                    found_blocks = set()
+                    for idx_str, hash_val in parsed_meas:
+                        if idx_str in block_names and idx_str not in found_blocks:
+                            name = block_names[idx_str]
+                            self.log_msg(f"Block {idx_str:<6} | {name:<18} | {hash_val.upper()} ....[END]", "pass")
+                            found_blocks.add(idx_str)
+
+                    # ========================================================
+                    # 🔍 智慧解析：尋找詢問總數與 Block 1~N 訊息 (依據總數動態過濾與去重)
+                    # ========================================================
+                    total_blocks_n = 5
+                    nonce_pattern = re.compile(
+                        r"Measurements\s*Response\s*data:\s*SPDMVersion:\s*([^,\n]+),\s*RequestResponseCode:\s*([^,\n]+),\s*Param1:\s*([^,\n]+),\s*Param2:\s*([^,\n]+),\s*Number\s*of\s*blocks:\s*0x00,\s*Nonce\s*0x20\s*bytes:\s*([0-9A-Fa-f]+)",
+                        re.IGNORECASE
+                    )
+                    nonce_match = nonce_pattern.search(content)
+
+                    if nonce_match:
+                        spdm_ver, resp_code, p1, p2, nonce_val = nonce_match.groups()
+                        try:
+                            total_blocks_n = int(p1.strip(), 16)
+                        except ValueError:
+                            total_blocks_n = 5
+
+                        self.log_msg(f"\n⚡ [SPDM Step 1: Get Number of Blocks & Nonce Verification]", "header_data")
+                        self.log_msg(f" └── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──", "info")
+                        self.log_msg(f"   • SPDM Version           : {spdm_ver.strip()}", "pass")
+                        self.log_msg(
+                            f"   • RequestResponseCode    : {resp_code.strip()} (0x60 = MEASUREMENTS Response)", "pass")
+                        self.log_msg(
+                            f"   • Detected Total Blocks  : {p1.strip()} (裝置回報總共有 {total_blocks_n} 個 Block)",
+                            "warning")
+                        self.log_msg(f"   • Anti-Replay Nonce (32B): {nonce_val.strip().upper()}", "info")
+
+                    resp_pattern = re.compile(
+                        r"Measurements\s*Response\s*data:\s*SPDMVersion:\s*([^,\n]+),\s*RequestResponseCode:\s*([^,\n]+),\s*Param1:\s*([^,\n]+),\s*Param2:\s*([^,\n]+),\s*Number\s*of\s*blocks:\s*([^,\n]+),\s*MeasurementBlockIndex:\s*([^,\n]+),\s*MeasurementType:\s*([^,\n]+)",
+                        re.IGNORECASE
+                    )
+                    resp_matches = resp_pattern.findall(content)
+
+                    if resp_matches:
+                        self.log_msg(f"\n📋 [SPDM Step 2: Detailed Metadata for Block 1 ~ {total_blocks_n}]:",
+                                     "header_data")
+
+                        unique_responses = {}
+                        for match in resp_matches:
+                            spdm_ver, resp_code, p1, p2, num_blocks, blk_idx, meas_type = match
+                            if num_blocks.strip() == "0x00" or blk_idx.strip() == "0x00":
+                                continue
+                            clean_idx = blk_idx.strip()
+                            unique_responses[clean_idx] = (spdm_ver, resp_code, p1, p2, num_blocks, meas_type)
+
+                        for i in range(1, total_blocks_n + 1):
+                            hex_idx = f"0x{i}"
+                            str_idx = str(i)
+                            target_key = str_idx if str_idx in unique_responses else (
+                                hex_idx if hex_idx in unique_responses else None)
+
+                            if target_key:
+                                spdm_ver, resp_code, p1, p2, num_blocks, meas_type = unique_responses[target_key]
+                                self.log_msg(f" └── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ── ──", "info")
+                                self.log_msg(f"   • Current Block Index    : {target_key} (Block {i})", "warning")
+                                self.log_msg(f"   • Measurement Type Label : {meas_type.strip()}", "warning")
+                                self.log_msg(f"   • SPDM Version           : {spdm_ver.strip()}", "pass")
+                                self.log_msg(
+                                    f"   • RequestResponseCode    : {resp_code.strip()} (0x60 = MEASUREMENTS Response)",
+                                    "pass")
+                                self.log_msg(
+                                    f"   • Request Context Info   : Params={p1.strip()}/{p2.strip()} | Requested Blocks={num_blocks.strip()}",
+                                    "info")
+
+                    missing_blocks = set(block_names.keys()) - found_blocks
+                    if missing_blocks:
+                        self.log_msg("\n⚠️ 未在 Log 中發現以下區塊的實體數據 (可能未要求讀取):", "warning")
+                        for m_blk in sorted(missing_blocks):
+                            self.log_msg(f"  - Block {m_blk}: {block_names[m_blk]}", "info")
+                else:
+                    self.log_msg("⚠️ 在 spdm.log 中未偵測到結構化的實體數據 (Measurement Hex)。", "warning")
+
+                # ========================================================
+                # 🔐 密碼學元件精準打印：All Measurements Signature 驗證組件
+                # ========================================================
+                self.log_msg("\n" + "-" * 60, "header")
+                self.log_msg("🔐 [Cryptographic Components for All Measurements Verification]", "header_data")
+
+                # 1. 提取並顯示此步驟的 Nonce
+                all_meas_nonce_match = re.search(r"Nonce\s*0x20\s*bytes:\s*([0-9A-Fa-f]{64})", content)
+                if all_meas_nonce_match:
+                    self.log_msg(f" 1. [Nonce (32B)] : {all_meas_nonce_match.group(1).upper()}", "info")
+                else:
+                    self.log_msg(f" 1. [Nonce (32B)] : ⚠️ 未能在全量度量日誌中定位到 Nonce", "warning")
+
+                # 2. 提取並顯示此步驟的 Signature (96B Raw R+S 格式)
+                all_meas_sig_match = re.search(r"Signature\s*0x0060\s*bytes:\s*([0-9A-Fa-f]{192})", content)
+                if all_meas_sig_match:
+                    full_sig = all_meas_sig_match.group(1).upper()
+                    r_part = full_sig[:96]
+                    s_part = full_sig[96:]
+                    self.log_msg(f" 2. [Signature (96B)] : {full_sig}", "pass")
+                    self.log_msg(f"    ├── Raw R-Component (48B): {r_part}", "info")
+                    self.log_msg(f"    └── Raw S-Component (48B): {s_part}", "info")
+                else:
+                    self.log_msg(f" 2. [Signature (96B)] : ⚠️ 未能在全量度量日誌中定位到 Signature", "warning")
+
+                # 3. 提取並顯示 Leaf Public Key (Cert3 的公鑰)
+                if certs:
+                    try:
+                        leaf_pub = certs[-1].public_key()
+                        if isinstance(leaf_pub, ec.EllipticCurvePublicKey):
+                            full_hex = leaf_pub.public_bytes(
+                                encoding=serialization.Encoding.X962,
+                                format=serialization.PublicFormat.UncompressedPoint
+                            ).hex().upper()
+                            leaf_pubkey_hex = full_hex[2:]  # 跳過開頭 04，提取純 X+Y 座標 96 位元組
+                            self.log_msg(f" 3. [Leaf Public Key (Cert3 Raw X+Y)] :\n    >> {leaf_pubkey_hex}", "header")
+                        else:
+                            self.log_msg(f" 3. [Leaf Public Key] : 非 ECC 密鑰類型，無法轉換為標準 Raw Hex", "warning")
+                    except Exception as e:
+                        self.log_msg(f" 3. [Leaf Public Key] : 提取失敗 -> {e}", "fail")
+                else:
+                    self.log_msg(f" 3. [Leaf Public Key] : ⚠️ 無可用的憑證鏈資料 (certs list is empty)", "fail")
+
+                # 4. Measurement TBS (To-Be-Signed)
+
+                self.log_msg(f"\nMeasurement(TBS)= SPDM Response + Nonce + Number of Measurements + Measurement at Block1~5", "header")
+
+                self.log_msg("-" * 60, "header")
+
+                # CEC1736 Measurement Guide 說明指南
                 guide_text = (
                         "\n" + "=" * 60 + "\n"
-                                          "【CEC1736  SPDM Measurements 】\n" + "-" * 60 + "\n"
-                                                                                         f"{'Block 1':<10} | {'ROM':<15} | 硬體身分：出廠固定，不應變動。\n"
-                                                                                         f"{'Block 2':<10} | {'Mutable FW':<15} | 韌體版本：對應 v.1.5.1(1203)，改 Code 即變。\n"
-                                                                                         f"{'Block 3':<10} | {'HW Config':<15} | 硬體設定：Pin 腳、Strapping 參數。\n"
-                                                                                         f"{'Block 4':<10} | {'FW Config':<15} | 韌體設定：Key 設定與安全原則 (Policies)。\n"
-                                                                                         f"{'Block 5':<10} | {'Manifest':<15} | 標準答案卷：包含以上項目的預期 Hash。\n"
+                                          "【CEC1736  SPDM Measurements Reference Guide】\n" + "-" * 60 + "\n"
+                                                                                                        f"{'Block 1':<10} | {'ROM':<15} | 硬體身分：出廠固定，不應變動。\n"
+                                                                                                        f"{'Block 2':<10} | {'Mutable FW':<15} | 韌體版本：對應 v.1.5.1(1203)，改 Code 即變。\n"
+                                                                                                        f"{'Block 3':<10} | {'HW Config':<15} | 硬體設定：Pin 腳、Strapping 參數。\n"
+                                                                                                        f"{'Block 4':<10} | {'FW Config':<15} | 韌體設定：Key 設定與安全原則 (Policies)。\n"
+                                                                                                        f"{'Block 5':<10} | {'Manifest':<15} | 標準答案卷：包含以上項目的預期 Hash。\n"
                 )
                 self.log_msg(guide_text)
             except Exception as e:
                 self.log_msg(f"   ❌ Error: {e}", "fail")
-
     def show_help(self):
         help_text = (
                 r"1. Modify \tpds\cec_utilities\spdmspdm_cmds.py" + "\n"

@@ -8,6 +8,7 @@ import configparser
 from tab_ec import ECTab
 from tab_cert import CertTab
 from tab_spdm_parser import SPDMParserTab
+from tab_sha384 import Sha384Tab  # <-- 新增：導入 SHA384 分頁模組
 from tab_about import AboutTab
 
 CONFIG_FILE = "gui_config.ini"
@@ -38,15 +39,17 @@ class App(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # 2. 初始化各個分頁 (只傳 notebook 過去，讓分頁乖乖待著)
+        # 2. 初始化各個分頁
         self.tab_ec = ECTab(self.notebook)
         self.tab_cert = CertTab(self.notebook, self.tab_ec)
-        self.tab_spdm = SPDMParserTab(self.notebook) # <-- 修正：移除後面的 self
+        self.tab_spdm = SPDMParserTab(self.notebook)
+        self.tab_sha384 = Sha384Tab(self.notebook)  # <-- 新增：初始化 SHA384 分頁
         self.tab_about = AboutTab(self.notebook)
 
         self.notebook.add(self.tab_ec, text="EC Sign / Verify")
         self.notebook.add(self.tab_cert, text="Certificate Decoder")
         self.notebook.add(self.tab_spdm, text="SPDM Log Parser")
+        self.notebook.add(self.tab_sha384, text="SHA384 Calculator")  # <-- 新增：加入介面頁籤
         self.notebook.add(self.tab_about, text="About")
 
         # 3. 綁定關閉事件：App 負責記住位置
@@ -54,7 +57,6 @@ class App(tk.Tk):
 
     def load_config(self):
         config = configparser.ConfigParser()
-        # 預設起始位置
         default_geom = "1400x700+100+100"
 
         if os.path.exists(CONFIG_FILE):
@@ -62,19 +64,14 @@ class App(tk.Tk):
                 config.read(CONFIG_FILE)
                 geom = config.get('Window', 'geometry', fallback=default_geom)
 
-                # --- 新增：防呆檢查 ---
-                # 格式通常是 "寬x高+X+Y"
                 parts = geom.replace('x', '+').split('+')
                 if len(parts) == 4:
                     win_x = int(parts[2])
                     win_y = int(parts[3])
 
-                    # 取得目前「主螢幕」的寬高 (簡單檢查)
                     screen_w = self.winfo_screenwidth()
                     screen_h = self.winfo_screenheight()
 
-                    # 如果 X 或 Y 座標遠大於目前螢幕，或是負數太嚴重
-                    # 就重置回 +100+100，避免視窗開在螢幕外
                     if win_x > screen_w or win_y > screen_h or win_x < -screen_w:
                         geom = "1400x700+100+100"
 
@@ -87,11 +84,9 @@ class App(tk.Tk):
     def save_config(self):
         """關閉時儲存位置並退出"""
         try:
-            # 強制更新視窗狀態，確保抓到最新坐標
             self.update_idletasks()
             current_geometry = self.winfo_geometry()
 
-            # 偵測是否抓到無效值 (例如 1x1+0+0)，如果是就不存
             if "+0+0" in current_geometry and "1x1" in current_geometry:
                 self.destroy()
                 return
@@ -99,7 +94,6 @@ class App(tk.Tk):
             config = configparser.ConfigParser()
             config['Window'] = {'geometry': current_geometry}
 
-            # 使用絕對路徑確保檔案存在 .exe 同級目錄
             base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
             config_path = os.path.join(base_dir, CONFIG_FILE)
 
