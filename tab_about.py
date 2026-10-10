@@ -21,7 +21,7 @@ class AboutTab(ttk.Frame):
         self.box.tag_bind(tag, "<Leave>", lambda e: self.box.config(cursor="arrow"))
 
     def render_content(self):
-        self.box.insert(tk.END, " /\\_/\\ \n( 0.0 )\n (_ _)~\nECDSA Helper Tool v2.6.0 (Modular)\n\n")
+        self.box.insert(tk.END, " /\\_/\\ \n( 0.0 )\n (_ _)~\nECDSA Helper Tool v2.7.0 (Modular)\n\n")
         self.box.insert(tk.END, "Author: LeoWang/Weikeng\nEmail: leowang@weikeng.com.tw\n\nLinks:\n")
         self.add_link("JS ECDSA Online Sample", "https://kjur.github.io/jsrsasign/sample/sample-ecdsa.html")
         self.add_link("ASN.1 Online Decoder", "https://lapo.it/asn1js/")

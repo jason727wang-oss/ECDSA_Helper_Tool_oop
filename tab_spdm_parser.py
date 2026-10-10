@@ -81,7 +81,7 @@ class SPDMParserTab(ttk.Frame):
 
         path_frame.columnconfigure(1, weight=1)
 
-        # --- 按鈕操作區 (原本的功能) ---
+        # --- 按鈕操作區 (已依要求對調順序) ---
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", padx=10, pady=5)
 
@@ -96,6 +96,13 @@ class SPDMParserTab(ttk.Frame):
             btn = ttk.Button(btn_frame, text=f"Cert{i}.pem", command=lambda idx=i: self.open_file(f"cert{idx}.pem"))
             btn.pack(side="left", padx=2)
 
+        self.btn_replace_log = tk.Button(
+            btn_frame, text="Replace spdm.log", command=self.handle_copy_log,
+            bg="#FFE4B5", fg="#8B4513", activebackground="#F4A460", relief="raised",
+            borderwidth=2, padx=10, pady=2, cursor="hand2"
+        )
+        self.btn_replace_log.pack(side="left", padx=2)
+
         self.btn_analyze = tk.Button(
             btn_frame, text="Log Parser & Verify", command=self.process_log,
             bg="#ADD8E6", fg="black", activebackground="#87CEEB", relief="raised",
@@ -109,13 +116,6 @@ class SPDMParserTab(ttk.Frame):
             borderwidth=2, padx=10, pady=2, cursor="hand2"
         )
         self.btn_clear.pack(side="left", padx=2)
-
-        self.btn_replace_log = tk.Button(
-            btn_frame, text="Replace spdm.log", command=self.handle_copy_log,
-            bg="#FFE4B5", fg="#8B4513", activebackground="#F4A460", relief="raised",
-            borderwidth=2, padx=10, pady=2, cursor="hand2"
-        )
-        self.btn_replace_log.pack(side="left", padx=2)
 
         self.btn_help = ttk.Button(btn_frame, text="Help / Info", command=self.show_help)
         self.btn_help.pack(side="right", padx=10)
@@ -488,27 +488,37 @@ class SPDMParserTab(ttk.Frame):
                     self.log_msg(f" 3. [Leaf Public Key] : ⚠️ 無可用的憑證鏈資料 (certs list is empty)", "fail")
 
                 # 4. Measurement TBS (To-Be-Signed)
-
                 self.log_msg(f"\nMeasurement(TBS)= SPDM Response + Nonce + Number of Measurements + Measurement at Block1~5", "header")
 
                 self.log_msg("-" * 60, "header")
 
                 # CEC1736 Measurement Guide 說明指南
                 guide_text = (
-                        "\n" + "=" * 60 + "\n"
-                                          "【CEC1736  SPDM Measurements Reference Guide】\n" + "-" * 60 + "\n"
-                                                                                                        f"{'Block 1':<10} | {'ROM':<15} | 硬體身分：出廠固定，不應變動。\n"
-                                                                                                        f"{'Block 2':<10} | {'Mutable FW':<15} | 韌體版本：對應 v.1.5.1(1203)，改 Code 即變。\n"
-                                                                                                        f"{'Block 3':<10} | {'HW Config':<15} | 硬體設定：Pin 腳、Strapping 參數。\n"
-                                                                                                        f"{'Block 4':<10} | {'FW Config':<15} | 韌體設定：Key 設定與安全原則 (Policies)。\n"
-                                                                                                        f"{'Block 5':<10} | {'Manifest':<15} | 標準答案卷：包含以上項目的預期 Hash。\n"
+                    "\n" + "=" * 60 + "\n"
+                    "【CEC1736  SPDM Measurements Reference Guide】\n" + "-" * 60 + "\n"
+                    f"{'Block 1':<10} | {'ROM':<15} | 硬體身分：出廠固定，不應變動。\n"
+                    f"{'Block 2':<10} | {'Mutable FW':<15} | 韌體版本：對應 v.1.5.1(1203)，改 Code 即變。\n"
+                    f"{'Block 3':<10} | {'HW Config':<15} | 硬體設定：Pin 腳、Strapping 參數。\n"
+                    f"{'Block 4':<10} | {'FW Config':<15} | 韌體設定：Key 設定與安全原則 (Policies)。\n"
+                    f"{'Block 5':<10} | {'Manifest':<15} | 標準答案卷：包含以上項目的預期 Hash。\n"
                 )
                 self.log_msg(guide_text)
+
+                # 💡 自動將分析結果存成 SPDM Analysis Log.txt
+                try:
+                    log_content = self.display.get("1.0", tk.END)
+                    with open("SPDM Analysis Log.txt", "w", encoding="utf-8") as f_log:
+                        f_log.write(log_content)
+                    self.log_msg(f"\n✅ 完整分析報告已成功儲存至: {os.path.abspath('SPDM Analysis Log.txt')}", "pass")
+                except Exception as save_err:
+                    self.log_msg(f"\n   ❌ 儲存分析報告失敗: {save_err}", "fail")
+
             except Exception as e:
                 self.log_msg(f"   ❌ Error: {e}", "fail")
+
     def show_help(self):
         help_text = (
-                r"1. Modify \tpds\cec_utilities\spdmspdm_cmds.py" + "\n"
+                r"1. Modify \tpds\cec_utilities\spdm_cmds.py" + "\n"
                 + 'logging.info(f"Challenge Signature: {signature.hex().upper()}")\n'
                 + '=>logging.info(f"Leo challenge_msg(TBS): {challenge_msg.hex().upper()}")\n\n'
                 + "2. Tool will save paths in config.ini automatically.\n"
